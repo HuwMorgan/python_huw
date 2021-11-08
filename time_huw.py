@@ -4,12 +4,20 @@ import numpy as np
 
 def anytim2tai(date_in):
 
-    date=parse_time(date_in)
-    t=Time(date,format='isot',scale='tai')
-    if hasattr(t,'tai_seconds'):
-        tai=t.tai_seconds
-    else:
-        tai=t.unix_tai+378691200.0
+    n=np.size(date_in)
+    tai=np.empty(n)
+
+    for i in range(n):
+        if date_in[i] == "":
+            tai[i]=float("nan")
+            continue
+
+        date=parse_time(date_in[i])
+        t=Time(date,format='isot',scale='tai')
+        # if hasattr(t,'tai_seconds'):  #2021/11/08 HUW - this is 37 seconds too late, resort to just add constant
+        #     tai=t.tai_seconds
+        # else:
+        tai[i]=t.unix_tai+378691163.0
 
     return tai
 
@@ -17,16 +25,18 @@ def anytim2tai(date_in):
 def anytim2cal(date_in0,tai=False,form=11,date_only=False):
 
     n=np.size(date_in0)
-    if n == 1:
+    if isinstance(date_in0,list)==False and isinstance(date_in0,np.ndarray)==False:
         date_in=[date_in0]
     else:
         date_in=date_in0
 
-    datemain=[]
+    datemain = ["" for i in range(n)]
 
     for imain in range(n):
 
         if isinstance(date_in[imain],str) == False:
+            if np.isnan(date_in[imain])==True:
+                continue
             tai=True
 
         if tai == True: # user has supplied date_in as TAI (this is the IDL/Solarsoft TAI, or seconds since 1957/12/31 23:59:51)
@@ -53,7 +63,7 @@ def anytim2cal(date_in0,tai=False,form=11,date_only=False):
             print("time_huw.anytim2cal_huw: form not recognised: ",date_in[imain],", leave unchanged")
             date = date_in[imain]
 
-        datemain.append(date)
+        datemain[imain]=date
 
     return datemain
 
