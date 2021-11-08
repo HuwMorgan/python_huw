@@ -1,6 +1,4 @@
-from datetime import datetime
 from sunpy.time import parse_time
-# from sunpy.time import TimeTaiSeconds
 from astropy.time import Time
 import time_huw as thuw
 
@@ -22,7 +20,7 @@ tai=thuw.anytim2tai(date)
 print(tai)
 print("")
 
-print("Testing form=11")
+print("Testing form=8")
 date11=thuw.anytim2cal(tai,form=8,date_only=False)
 print(date11)
 print("")
