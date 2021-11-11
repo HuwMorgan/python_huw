@@ -1,7 +1,7 @@
 import numpy as np
 import math
 
-def congrid_huw(a,n_out):
+def congrid(a,n_out):
 
     # equivalent of IDL's congrid with keywords /interp and /minus_one
 
@@ -15,9 +15,15 @@ def congrid_huw(a,n_out):
 
     return b
 
-def rebin_huw(a,n_out):
+def minmax(a):
+    min=np.nanmin(a)
+    max=np.nanmax(a)
+    mnmx=[min,max]
+    return mnmx
 
-    print("rebin_huw: this function is not yet written properly, use congrid for interpolation of 1D vectors")
+def rebin(a,n_out):
+
+    print("rebin: this function is not yet written properly, use congrid for interpolation of 1D vectors")
 
     n_in=np.size(a)
     if n_in == n_out:
@@ -31,7 +37,7 @@ def rebin_huw(a,n_out):
         step= n_out//n_in
         
         if step != rat:
-            print("rebin_huw: n_out should be integer factor of n_in!")
+            print("rebin: n_out should be integer factor of n_in!")
             return
         
         xout=np.linspace(0,n_in-1,num=n_out)
@@ -42,7 +48,7 @@ def rebin_huw(a,n_out):
         step= n_in//n_out
         
         if step != rat:
-            print("rebin_huw: n_out should be integer factor of n_in!")
+            print("rebin: n_out should be integer factor of n_in!")
             return
 
         b = np.empty(n_out) 

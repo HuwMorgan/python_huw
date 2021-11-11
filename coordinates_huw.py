@@ -38,7 +38,6 @@ def cartesian2polar(im0,parange,rra,npa,nr,xcen,ycen,pix_size=1,roll=0,missing=f
 
     return imp,pam,rm
 
-
 def cartesian2spherical(x,y,z,degrees=False,wrap=False,carrington=False):
 
     r=np.sqrt(x**2+y**2+z**2)
@@ -63,7 +62,6 @@ def cartesian2spherical(x,y,z,degrees=False,wrap=False,carrington=False):
     
     return r, the, phi
 
-
 def get_ht_pa_2d(nx,ny,xcen,ycen,pix_size=1,roll=0):
 
     x=(np.arange(0,nx)-xcen)*pix_size
@@ -76,7 +74,6 @@ def get_ht_pa_2d(nx,ny,xcen,ycen,pix_size=1,roll=0):
     pa=np.where(pa < 0,pa+360,pa)
 
     return x,y,ht,pa
-
 
 def make_coordinates(n,range,minus_one=False,reverse=False):
 

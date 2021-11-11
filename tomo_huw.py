@@ -1,11 +1,16 @@
 import numpy as np
 import math
 import general_huw as gen
-import time_huw as time
+import time_huw
+import coordinates_huw as coord
+import constants_huw as const
+import astropy.time as Time
+from sunpy.time import parse_time
+from stereo_spice.coordinates import StereoSpice
 
 def makeg(p,r,x={},y={},z={},nocube=False,bk=False,nopos=False):
 
-   if isinstance(x,dict) == False:
+    if isinstance(x,dict) == False:
         if nocube == False:
             nx=np.size(x)
             ny=np.size(y)
@@ -23,7 +28,7 @@ def makeg(p,r,x={},y={},z={},nocube=False,bk=False,nopos=False):
             else:
                 p=np.sqrt(y**2+z**2)
 
-    s=1/r 
+    s=1/r
     s2=s**2
     c=np.sqrt(1-s2)
     ar=c*s2
@@ -56,78 +61,96 @@ def tomo_make_geom(d,rmain,nt,npa,nx,dates={},spacecraft={}):
 
     n=np.size(dates)
     if nt == n:
-        tai=time.anytim2tai_huw(dates)
+        tai=time_huw.anytim2tai(dates)
     else: 
-        tai=gen.congrid_huw(time.anytim2tai_huw(dates),nt)
+        tai=gen.congrid(time_huw.anytim2tai(dates),nt)
 
-    dates=time.anytim2cal_huw(tai,form=11)
+    dates=time_huw.anytim2cal(tai,form=11,tai=True,msec=False)
 
-dates=anytim2cal(tai,form=11)
-pa=make_coordinates(npa,[0,360],/minus)*!dtor
-tt=(rebin(reform(tai,1,nt),npa,nt))
-ppa=(rebin(pa,npa,nt))
-rsun_cm=phys_constants(/rsun)
+    pa=coord.make_coordinates(npa,[0,360],minus_one=True)*np.deg2rad(1)
 
-print,'Calculating geometry...'
+    rsun_cm=const.phys_constants(rsun=True)
 
-dist=get_stereo_lonlat(dates,spacecraft,system='Carr',/deg)
-dist=reform(dist[0,*])/(rsun_cm*1.e-5)
-dist=rebin(reform(dist,1,nt),npa,nt,nx)
+    print('Calculating geometry...')
+    spice = StereoSpice()
+    obstime=parse_time(dates)
+    distlonlat=spice.get_lonlat(obstime,spacecraft,'CARRINGTON')
+    dist=distlonlat[0:,0]/(rsun_cm*1.e-5)
 
-xobs=make_coordinates(nx,[-1,1])
-;xobs=xobs*rmain*2
+    xobsfact=rmain*2.5
+    xobs=coord.make_coordinates(nx,[-1,1])*xobsfact
 
-xobs=rebin(reform(xobs,1,1,nx),npa,nt,nx)
-xobsfact=rmain*2.5
-xobs=temporary(xobs)*xobsfact;rebin(xobsfact,npa,nt,nx)
-dx=rebin((xobs[*,*,1]-xobs[*,*,0])*rsun_cm,npa,nt,nx)
-rsoho=xobs+dist;distance from SOHO to each LOS point;sqrt(dist^2-rmain^2)
-latsoho=atan(rmain/dist);asin(rmain/rsoho) HUW 2014/10/29
-lonsoho=rebin(ppa,npa,nt,nx)
+    lonsc,dist,xxobs = np.meshgrid(pa,dist,xobs,indexing="ij")
+    latsc=np.arctan2(rmain,dist)
+    dx=(xobs[1]-xobs[0])*rsun_cm #is the same for all LOS
+    rsc=xxobs+dist; # distance from spacecraft to each LOS point;sqrt(dist^2-rmain^2)
 
-;convert to cartesian and to HGRTN
-spherical2cartesian,rsoho,lonsoho,latsoho,z,y,x
+    # convert to Heliocentric-Cartesian (section 3.1 Thompson 2006 https://www.aanda.org/articles/aa/pdf/2006/14/aa4262-05.pdf)
+    y,x,z = coord.spherical2cartesian(rsc,lonsc,latsc)#y,x,z order because position angle (lonsc) measured from north
+    z=dist-z
+    x=-x # because position angle (lonsc) measured CCW from north
+    x0=np.copy(x)
+    y0=np.copy(y)
+    z0=np.copy(z)
 
-x=dist-temporary(x);heliocentric
-y=-temporary(y)
-r=sqrt(x^2+y^2+z^2)
+    # convert to Stonyhurst (section 7 of Thompson 2006), 
+    # and conversion to Carrington (longitude only for this, see Thompson eq. 3)
+    # Wish I could just use the StereoSpice conversion routines directly (like I do in IDL), 
+    # but convert_coord does not accept "HGRTN" with the observer as STEREO A, it expects observer as Sun.
+    # May contact Luke re. this 2021/11.
+    carrearth=spice.get_lonlat(obstime,"Earth",'CARRINGTON')
+    l0=carrearth[:,1]
+    loncarrobs=distlonlat[:,1]
+    lonstobs=np.deg2rad(loncarrobs-l0)
+    b0=np.deg2rad(distlonlat[:,2])
+    r=np.sqrt(x**2+y**2+z**2)
+    lat=np.zeros((npa,nt,nx))
+    lon=np.zeros((npa,nt,nx))
+    for i in range(nt):
+        lat[:,i,:]=np.arcsin((y[:,i,:]*np.cos(b0[i])+z[:,i,:]*np.sin(b0[i]))/r[:,i,:])
+        lonsh=lonstobs[i]+np.arctan2(x[:,i,:],z[:,i,:]*np.cos(b0[i])-y[:,i,:]*np.sin(b0[i]))
+        lon[:,i,:]=gen.wrap_n(np.rad2deg(lonsh)+l0[i],360)
 
-g=fltarr(npa,nt,nx)
+    colat=np.deg2rad(90)-lat
+    lon=np.deg2rad(lon)
+    # convert to cartesian. x,y,z are now cartesian Carrington coordinates
+    x,y,z=coord.spherical2cartesian(r,lon,colat)
 
-for i=0,nt-1 do begin
-  if i mod 50 eq 0 then print,i,' out of ',nt-1
-  coord=rotate([[(x[*,i,*])[*]],[(y[*,i,*])[*]],[(z[*,i,*])[*]]],4)
-  coord2=coord
-  convert_stereo_coord,dates[i],coord,'HGRTN','Carr',spacecraft=spacecraft
-  x[*,i,*]=coord[0,*]
-  y[*,i,*]=coord[1,*]
-  z[*,i,*]=coord[2,*]
-  g[*,i,*]=makeg(rmain,r[*,i,*],bk=spacecraft eq 'soho')
-endfor
+    g=makeg(rmain,r,bk=(spacecraft=="soho"))
+    # ***variables all agree with IDL up to this point***
 
-cartesian2spherical,x,y,z,r,lon,lat
+    rdropoffpwr=2.2
+    rdropoff=(rmain**rdropoffpwr)/(r**rdropoffpwr)
+    geomult=g*dx*rdropoff
+    tot_g=np.sum(geomult,axis=2)
 
-rdropoffpwr=2.2
-rdropoff=(rmain^rdropoffpwr)/(r^rdropoffpwr)
-geomult=g*dx*rdropoff
-tot_g=total(geomult,3)
+    # calculate correction factor
+    xc=coord.make_coordinates(1001,[-1,1])*rmain*3
+    rc=np.sqrt(xc**2+rmain**2)
+    gc=makeg(rmain,rc,bk=(spacecraft=='soho'))
+    rdropoffc=(rmain**rdropoffpwr)/(rc**rdropoffpwr)
+    dxc=(xc[1]-xc[0])*rsun_cm
+    geomultc=gc*dxc*rdropoffc
+    tot_gc=np.sum(geomultc)
+    corr_fact=tot_gc/np.mean(tot_g)
+    tot_g=tot_g*corr_fact
 
-;calculate correction factor
-xc=make_coordinates(1001,[-1,1])*rmain*3
-rc=sqrt(xc^2+rmain^2)
-gc=makeg(rmain,rc,bk=spacecraft eq 'soho')
-rdropoffc=(rmain^rdropoffpwr)/(rc^rdropoffpwr)
-dxc=(xc[1]-xc[0])*rsun_cm
-geomultc=gc*dxc*rdropoffc
-tot_gc=total(geomultc)
-corr_fact=tot_gc/mean(tot_g)
-tot_g=tot_g*corr_fact
+    geom = {
+        "dates":dates,
+        "pa":pa,
+        "rmain":rmain,
+        "x":x,
+        "y":y,
+        "z":z,
+        "g":g,
+        "dx":dx,
+        "tot_g":tot_g,
+        "r":r,
+        "lon":lon,
+        "lat":colat,
+        "geomult":geomult,
+        "corr_fact":corr_fact
+    }
+    
+    return geom
 
-geom={dates:dates,pa:pa,rmain:rmain,x:x,y:y,z:z,g:g, $
-  dx:dx,tot_g:tot_g,r:r,lon:lon,lat:lat, $
-  geomult:geomult,corr_fact:corr_fact}
-  
-return,geom
-
-end
- 

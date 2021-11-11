@@ -1,4 +1,7 @@
-Change directory to python_huw
+cd ./work/python/python_huw/
+git add .
+git commit -m "Add existing file"
+git push -u origin main
 
 Adding a project to GitHub without GitHub CLI
 

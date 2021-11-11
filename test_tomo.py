@@ -11,7 +11,7 @@ print('Testing tomo')
 n=10
 nout=5
 r=coord.make_coordinates(10,[2.2,8])
-r2=gen.congrid_huw(r,nout)
+r2=gen.congrid(r,nout)
 print(r)
 print(r2)
 

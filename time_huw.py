@@ -1,6 +1,7 @@
 from sunpy.time import parse_time
 from astropy.time import Time
 import numpy as np
+import re
 
 def anytim2tai(date_in):
 
@@ -22,7 +23,7 @@ def anytim2tai(date_in):
     return tai
 
     
-def anytim2cal(date_in0,tai=False,form=11,date_only=False):
+def anytim2cal(date_in0,tai=False,form=11,date_only=False,msec=True):
 
     n=np.size(date_in0)
     if isinstance(date_in0,list)==False and isinstance(date_in0,np.ndarray)==False:
@@ -62,6 +63,13 @@ def anytim2cal(date_in0,tai=False,form=11,date_only=False):
         else: 
             print("time_huw.anytim2cal_huw: form not recognised: ",date_in[imain],", leave unchanged")
             date = date_in[imain]
+
+        # if user has set msec to false then check if milliseconds are in date, and remove    
+        if not msec:
+            isms=re.findall("[.]",date)
+            if not isms==False:
+                ipos = re.search("[.]", date)
+                date=date[0:ipos.span()[0]]
 
         datemain[imain]=date
 
