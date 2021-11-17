@@ -1,6 +1,7 @@
 import numpy as np
 import math
 import general_huw as gen
+import functions_huw as func
 import time_huw
 import coordinates_huw as coord
 import constants_huw as const
@@ -112,6 +113,8 @@ def tomo_make_geom(d,rmain,nt,npa,nx,dates={},spacecraft={}):
         lon[:,i,:]=gen.wrap_n(np.rad2deg(lonsh)+l0[i],360)
 
     colat=np.deg2rad(90)-lat
+    lon=np.where(lon > 180,lon-360,lon)
+    lon=np.where(lon < -180,lon+360,lon)
     lon=np.deg2rad(lon)
     # convert to cartesian. x,y,z are now cartesian Carrington coordinates
     x,y,z=coord.spherical2cartesian(r,lon,colat)
@@ -154,3 +157,64 @@ def tomo_make_geom(d,rmain,nt,npa,nx,dates={},spacecraft={}):
     
     return geom
 
+def tomo_prep_sph(geom,nlon=360,nlat=180,norder=11):
+
+    pi=math.pi
+
+    lonh,lath,llonh,llath,dlon,dlat=coord.make_lonlat(nlon,nlat)
+
+    npa,nt,nx=gen.sizearr(geom["lon"])
+
+    print('Constructing spherical harmonic basis...')
+
+    nl=norder
+    nsph=nl*(nl+1)+nl+1
+    lm=np.zeros((nsph,2))
+    sphdens=np.zeros((nlon,nlat,nsph))
+    sphmain=np.zeros((npa,nt,nsph))
+    cenx_sph=np.zeros((npa,nt,nsph))
+    xcen=nx//2
+
+    s=geom["lon"]
+    s=s[:,:,xcen]
+
+    df=np.roll(s,-1,axis=1)-s
+    db=s-np.roll(s,1,axis=1)
+    dlon=0.5*(db+df)
+    dlon[:,0]=df[:,0]
+    dlon[:,nt-1]=db[:,nt-1]
+    dlon=np.where(dlon > pi/2,dlon-pi,dlon)
+    dlon=np.where(dlon < -pi/2,dlon+pi,dlon)
+    
+    isph=0
+    for l in range(0,nl+1):
+        for m in range(-l,l+1):
+            lm[isph,0]=l
+            lm[isph,1]=m
+            sphdens[:,:,isph]=func.make_spher_harm(nl,llonh,llath,userlm=[l,m])
+            sphnow=func.make_spher_harm(nl,geom["lon"],geom["lat"],userlm=[l,m])
+            sphmain[:,:,isph]=np.sum(sphnow*geom["geomult"],axis=2)#LOS integrated SH
+            cenx_sph[:,:,isph]=func.make_spher_harm(nl,geom["lon"][:,:,xcen],geom["lat"][:,:,xcen],userlm=[l,m])*geom["geomult"][:,:,xcen]/dlon
+            isph+=1
+            if (isph % 10)==0: print(isph," out of ",nsph-1)
+
+    sphrecon={
+        "nsph":nsph,
+        "nl":nl,
+        "coeff":np.zeros(nsph),
+        "lm":lm,
+        "lon":lonh,
+        "lat":lath,
+        "sph":sphdens
+    }
+
+    sphdata={
+        "nsph":nsph,
+        "nl":nl,
+        "coeff":np.zeros(nsph),
+        "lm":lm,
+        "sph":sphmain,
+        "cenx_sph":cenx_sph
+    }
+
+    return sphrecon,sphdata

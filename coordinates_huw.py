@@ -92,6 +92,23 @@ def make_coordinates(n,range,minus_one=False,reverse=False):
 
     return c
 
+def make_lonlat(nlon=360,nlat=180,degree=False):
+
+    pi=math.pi
+    f=np.rad2deg(1) if degree else 1
+    lon=make_coordinates(nlon,[-pi,pi],minus_one=True)*f
+    lat=math.pi/2 if nlat == 1 else make_coordinates(nlat,[0,pi])*f
+    dlon=lon[1]-lon[0]
+    if nlat > 1:
+        llat,llon=np.meshgrid(lat,lon)
+        dlat=lat[1]-lat[0]
+    else:
+        dlat=0
+        llon=lon
+        llat=lat
+
+    return lon,lat,llon,llat,dlon,dlat
+
 def spherical2cartesian(r,the,phi,degrees=False,carrington=False,grid=False):
 
     if degrees==True:

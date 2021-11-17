@@ -57,6 +57,20 @@ def rebin(a,n_out):
 
     return b
 
+def sizearr(a):
+    ndim=np.ndim(a)
+    sh=np.shape(a)
+    if ndim == 1:
+        return sh[0]
+    if ndim == 2:
+        return sh[0],sh[1]
+    if ndim == 3:
+        return sh[0],sh[1],sh[2]
+    if ndim == 4:
+        return sh[0],sh[1],sh[2],sh[3]
+    if ndim == 5:
+        return sh[0],sh[1],sh[2],sh[3],sh[4]
+        
 def wrap_n(a,wrap):
     b=((a % wrap)+wrap) % wrap
     return b
