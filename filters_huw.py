@@ -2,49 +2,9 @@ import numpy as np
 from scipy.ndimage.filters import uniform_filter1d
 from scipy import signal
 import functions_huw as func
-
-#sliding window mean/median/max/min smoothing for 1D vectors, default is mean smoothing.
-#x is input vector
-#wdth is width of sliding window (default=9)
-#type can be "mean" (default), "median", "max", or "min"
-#Note that towards edges of input vector, the sliding window is truncated
-#Huw Morgan at Aberystwyth University, 2021/10, hmorgan@aber.ac.uk
-def sliding_window_1d(x,wdth=9,type="mean"):
-
-    lenx=len(x)
-    if lenx <= 1:
-        print("x has <2 elements, returning x (sliding_window_1d)")
-        return x
-
-    n2=wdth//2
-    xm=np.empty(lenx)
-    for i in range(lenx):
-        
-        ileft=i-n2
-        
-        if ileft < 0:
-            ileft=0
-        
-        iright=i+n2
-        if iright > (lenx-1):
-            iright=lenx-1
-        
-        #want to use match (case) statement here, but only available on python 3.10.
-        if type.lower()=="mean":
-            xm[i]=np.mean(x[ileft:iright])
-        if type.lower()=="median":
-            xm[i]=np.median(x[ileft:iright])
-        if type.lower()=="min":
-            xm[i]=np.min(x[ileft:iright])
-        if type.lower()=="max":
-            xm[i]=np.max(x[ileft:iright])
-            # case _:
-            #     print("sliding_window_1d type not recognised, returning original vector")
-            #     xm=x
-            #     break
-        #print(i,ileft,iright,lenx)
-
-    return xm
+import general_huw as gen
+from skimage.measure import label, regionprops
+import matplotlib.pyplot as plt
 
 
 #For 1D vectors, identifies outliers by comparing values to local standard deviation. Replaces value by new value closer to local mean. Iterates.
@@ -161,3 +121,73 @@ def point_filter_2d(im0,width=3,nsig=2.6,niter=8,
         iter=iter+1
     
     return im
+
+def region_size_filter(mask,npix=1):
+
+    if np.ndim(mask) != 2:
+        print("region_size_filter currently only implemented for 2D arrays")
+        return
+
+    sh=np.shape(mask)
+    nx=sh[0]
+    ny=sh[1]
+
+    # label image regions
+    lab = label(mask)
+
+    maskout=np.zeros((nx,ny))
+    for region in regionprops(lab):
+        # take regions with large enough areas
+        if region.area >= npix:
+            c=region.coords
+            for i in np.arange(region.area):
+                ix=c[i,0]
+                iy=c[i,1]
+                maskout[ix,iy]=1.
+
+    maskout=maskout > 0
+
+    return maskout
+
+#sliding window mean/median/max/min smoothing for 1D vectors, default is mean smoothing.
+#x is input vector
+#wdth is width of sliding window (default=9)
+#type can be "mean" (default), "median", "max", or "min"
+#Note that towards edges of input vector, the sliding window is truncated
+#Huw Morgan at Aberystwyth University, 2021/10, hmorgan@aber.ac.uk
+def sliding_window_1d(x,wdth=9,type="mean"):
+
+    lenx=len(x)
+    if lenx <= 1:
+        print("x has <2 elements, returning x (sliding_window_1d)")
+        return x
+
+    n2=wdth//2
+    xm=np.empty(lenx)
+    for i in range(lenx):
+        
+        ileft=i-n2
+        
+        if ileft < 0:
+            ileft=0
+        
+        iright=i+n2
+        if iright > (lenx-1):
+            iright=lenx-1
+        
+        #want to use match (case) statement here, but only available on python 3.10.
+        if type.lower()=="mean":
+            xm[i]=np.mean(x[ileft:iright])
+        if type.lower()=="median":
+            xm[i]=np.median(x[ileft:iright])
+        if type.lower()=="min":
+            xm[i]=np.min(x[ileft:iright])
+        if type.lower()=="max":
+            xm[i]=np.max(x[ileft:iright])
+            # case _:
+            #     print("sliding_window_1d type not recognised, returning original vector")
+            #     xm=x
+            #     break
+        #print(i,ileft,iright,lenx)
+
+    return xm

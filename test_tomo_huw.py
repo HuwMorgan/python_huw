@@ -22,7 +22,7 @@ import functions_huw as func
 # sphnow=func.make_spher_harm(7,lon,lat,userlm=[l,m])
 
 
-dir="/Users/hum2/data/stereo/secchi/pb/a/cor2/pythontest/"
+dir="/Users/hum2/data/sweep/"
 files=sorted(pathlib.Path(dir).glob('*.dat'))
 savename=dir+'geom.pkl'
 savenamesphrecon=dir+'sphrecon.pkl'

@@ -2,12 +2,17 @@ import numpy as np
 import math
 import general_huw as gen
 import functions_huw as func
+import filters_huw as filt
 import time_huw
 import coordinates_huw as coord
 import constants_huw as const
 import astropy.time as Time
 from sunpy.time import parse_time
 from stereo_spice.coordinates import StereoSpice
+from scipy.interpolate import RectBivariateSpline
+
+import matplotlib.pyplot as plt
+
 
 def makeg(p,r,x={},y={},z={},nocube=False,bk=False,nopos=False):
 
@@ -52,22 +57,180 @@ def makeg(p,r,x={},y={},z={},nocube=False,bk=False,nopos=False):
 
     return g
 
-def tomo_make_geom(d,rmain,nt,npa,nx,dates={},spacecraft={}):
+def tikhonov_opt_tomo(d):
 
-    if isinstance(spacecraft,dict) == True:
-        spacecraft=d["system"]
+    sh=np.shape(d["c"])
+    nshp=sh[0]
+    nl=sh[1]
+    nd=sh[2]
 
-    if isinstance(dates,dict) == True:
-        dates=d["dates"]
+    g=d["rho"]
 
-    n=np.size(dates)
-    if nt == n:
-        tai=time_huw.anytim2tai(dates)
-    else: 
-        tai=gen.congrid(time_huw.anytim2tai(dates),nt)
+    thresh=np.percentile(g,15)
+    mask=g < thresh
 
-    dates=time_huw.anytim2cal(tai,form=11,tai=True,msec=False)
+    mask=filt.region_size_filter(mask,npix=5)
 
+    nfine=512
+    l=np.linspace(np.log10(np.nanmin(d["l"])),np.log10(np.nanmax(d["l"])),num=nfine)
+    l=10**l
+    dens=np.linspace(np.nanmin(d["dens"]),np.nanmax(d["dens"]),num=nfine)
+
+    ix=np.interp(l,d["l"],np.arange(d["nl"]))
+    iy=np.interp(dens,d["dens"],np.arange(d["ndens"]))
+    ixx,iyy=np.meshgrid(ix,iy)
+    interp = RectBivariateSpline(np.arange(d["nl"]), np.arange(d["ndens"]), g,kx=1,ky=1)
+    gfine = interp.ev(ixx, iyy) 
+    interpmsk = RectBivariateSpline(np.arange(d["nl"]), np.arange(d["ndens"]), mask,kx=1,ky=1)
+    maskfine=interpmsk.ev(ixx,iyy)
+    indf=maskfine > 0
+    ixfine=np.arange(nfine)
+    iyfine=np.arange(nfine)
+    ixxfine,iyyfine=np.meshgrid(ixfine,iyfine)
+    ixf=ixxfine[indf]
+    iyf=iyyfine[indf]
+    gf=gfine[indf]
+    ixfineopt=np.sum(ixf*gf)/np.sum(gf)
+    iyfineopt=np.sum(iyf*gf)/np.sum(gf)
+
+    r=np.sqrt(ixf**2+iyf**2)
+    indopt=np.nanargmax(r)
+    ixfineopt2=ixf[indopt]
+    iyfineopt2=iyf[indopt]
+
+    ixfineopt=(ixfineopt+ixfineopt2)/2
+    iyfineopt=(iyfineopt+iyfineopt2)/2
+
+    ixopt=np.interp(ixfineopt,ixfine,ix)
+    iyopt=np.interp(iyfineopt,iyfine,iy)
+    lopt=np.interp(ixfineopt,ixfine,l)
+    dopt=np.interp(iyfineopt,iyfine,dens)
+
+    inv=np.linalg.inv(d["xx"]+lopt*d["id"])
+    c=np.sum(d["xy2"]*inv,1)
+    dens=np.sum(np.broadcast_to(c,(d["nlon"],d["nlat"],d["nsph"]))*d["sph"],axis=2)
+    dens=np.where(dens > dopt,dens,dopt)
+    c=[np.sum(np.squeeze(d["sph"][:,:,isph])*dens*d["sinlat"])*d["dlon"]*d["dlat"] for isph in np.arange(0,d["nsph"])]
+
+    return c
+
+
+def tikhonov_search_tomo(d,sphrecon,sphdata,geom,nl=25,ndens=20):
+
+    bobs=d["im"]
+    relnoise=d["relnoise"]
+
+    sh=np.shape(sphdata["sph"])
+    nsphdata=sh[2]
+    nt=sh[1]
+    npa=sh[0]
+    n=npa*nt
+
+    a=np.reshape(np.ravel(sphdata["sph"]),(n,nsphdata))
+    mna=np.mean(np.abs(sphdata["sph"]))
+    a = a/mna
+
+    y=np.ravel(bobs)/mna
+    noise=np.ravel(relnoise)*y
+
+    index=~np.isnan(y) & ~np.isnan(noise)
+    y=y[index]
+    noise=noise[index]
+    n=np.size(y)
+    a=a[index,:]
+
+    weights=1/noise
+    weights=weights/np.mean(weights)
+    a=a*np.broadcast_to(np.expand_dims(weights,1),(n,nsphdata))
+    y=y*weights
+
+    xx=np.matmul(np.transpose(a),a)
+    xy=[np.sum(a[:,i]*y) for i in np.arange(nsphdata)]
+    xxinv=np.linalg.inv(xx)
+    xy2=np.broadcast_to(xy,(nsphdata,nsphdata))
+
+    w=np.sum(np.abs(sphdata["lm"]),axis=1)
+    w=w/np.mean(w)
+    id=np.identity(nsphdata)*np.broadcast_to(w,(nsphdata,nsphdata))
+
+    diagxx=np.diag(xx)
+    lmn=np.nanmin(diagxx)*0.1
+    lmx=np.nanmax(diagxx)*2.0
+    l=10**np.linspace(np.log10(lmn),np.log10(lmx),num=nl)
+
+    minb=np.percentile(bobs,2)
+    indmin=bobs < minb
+    bmin=bobs[indmin]
+    geotemp=np.swapaxes(np.sum(geom["geomult"],axis=2),1,0)
+    geotemp=geotemp[indmin]
+    densmin=bmin/geotemp
+    min_d0=np.mean(densmin)*0.2
+    max_d0=np.mean(densmin)*2.0
+    mindens=np.linspace(min_d0,max_d0,num=ndens)
+    
+    sph=sphrecon["sph"]
+    sh=np.shape(sph)
+    nsph=sh[2]
+    nlat=sh[1]
+    nlon=sh[0]
+    lon=sphrecon["lon"]
+    lat=sphrecon["lat"]
+    sinlat=np.broadcast_to(np.sin(lat),(nlon,nlat))
+    dlon=np.median(lon[1:]-lon[0:-1])
+    dlat=np.median(lat[1:]-lat[0:-1])
+
+    rho=np.zeros((nl,ndens))
+    cmain=np.zeros((nsphdata,nl,ndens))
+    
+    for il in np.arange(0,nl):
+        print(il,' out of ',nl-1)
+    
+        inv=np.linalg.inv(xx+l[il]*id)
+        c=np.sum(xy2*inv,1)
+
+        dens=np.sum(np.broadcast_to(c,(nlon,nlat,nsph))*sph,axis=2)
+        
+        for idens in np.arange(0,ndens):
+            densnow=np.where(dens > mindens[idens],dens,mindens[idens])
+            c=[np.sum(np.squeeze(sph[:,:,isph])*densnow*sinlat)*dlon*dlat for isph in np.arange(0,nsph)]
+            yf=np.sum(a*np.broadcast_to(np.expand_dims(c,0),(n,nsphdata)),axis=1)            
+            rho[il,idens]=np.mean(np.sqrt((yf-y)**2)/noise)
+            cmain[:,il,idens]=c
+
+    t={
+        "nl":nl,
+        "ndens":ndens,
+        "l":l,
+        "dens":mindens,
+        "rho":rho,
+        "c":cmain,
+        "meanabsa":mna,
+        "xx":xx,
+        "id":id,
+        "xy2":xy2,
+        "sph":sph,
+        "nlon":nlon,
+        "nlat":nlat,
+        "nsph":nsph,
+        "sinlat":sinlat,
+        "dlon":dlon,
+        "dlat":dlat
+    }
+
+    return t
+
+def tomo_make_geom(d,large=True):
+
+    rmain=d["rmain"]
+    spacecraft=d["system"]
+    dates=d["dates"]
+
+    nx=151 if large else 41
+    npa=d["npa"]
+    dates=d["dates"]
+    nt=np.size(dates)
+    
+    tai=time_huw.anytim2tai(dates)
     pa=coord.make_coordinates(npa,[0,360],minus_one=True)*np.deg2rad(1)
 
     rsun_cm=const.phys_constants(rsun=True)
@@ -157,7 +320,7 @@ def tomo_make_geom(d,rmain,nt,npa,nx,dates={},spacecraft={}):
     
     return geom
 
-def tomo_prep_sph(geom,nlon=360,nlat=180,norder=11):
+def tomo_prep_sph(geom,nlon=540,nlat=270,norder=22):
 
     pi=math.pi
 

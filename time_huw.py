@@ -13,7 +13,7 @@ def anytim2tai(date_in):
             tai[i]=float("nan")
             continue
 
-        date=parse_time(date_in[i])
+        date=parse_time(date_in) if n==1 else parse_time(date_in[i])
         t=Time(date,format='isot',scale='tai')
         # if hasattr(t,'tai_seconds'):  #2021/11/08 HUW - this is 37 seconds too late, resort to just add constant
         #     tai=t.tai_seconds

@@ -21,6 +21,16 @@ def minmax(a):
     mnmx=[min,max]
     return mnmx
 
+def pad_2d(a,n=1):
+
+    sh=np.shape(a)
+    nx=sh[0]
+    ny=sh[1]
+    a2=np.zeros(nx+n*2,ny+n*2)
+    a2[1,1]=a
+
+    return a2
+
 def rebin(a,n_out):
 
     print("rebin: this function is not yet written properly, use congrid for interpolation of 1D vectors")
