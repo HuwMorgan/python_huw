@@ -126,7 +126,9 @@ def tikhonov_search_tomo(d,sphrecon,sphdata,geom,nl=25,ndens=20):
     npa=sh[0]
     n=npa*nt
 
-    a=np.reshape(np.ravel(sphdata["sph"]),(n,nsphdata))
+    a=np.zeros((n,nsphdata))
+    for i in np.arange(nsphdata):
+        a[:,i]=np.ravel(sphdata["sph"][:,:,i],order='F')
     mna=np.mean(np.abs(sphdata["sph"]))
     a = a/mna
 
@@ -245,6 +247,8 @@ def tomo_make_geom(d,large=True):
     xobs=coord.make_coordinates(nx,[-1,1])*xobsfact
 
     lonsc,dist,xxobs = np.meshgrid(pa,dist,xobs,indexing="ij")
+ 
+
     latsc=np.arctan2(rmain,dist)
     dx=(xobs[1]-xobs[0])*rsun_cm #is the same for all LOS
     rsc=xxobs+dist; # distance from spacecraft to each LOS point;sqrt(dist^2-rmain^2)

@@ -27,8 +27,8 @@ dir="/Users/hum2/data/sweep/"
 overwrite_data=False
 overwrite_geom=False
 overwrite_sphrecon=False
-overwrite_fit=False
-overwrite_coeff=False
+overwrite_fit=True
+overwrite_coeff=True
 
 savenamed=dir+'d.pkl'
 savenamegeom=dir+'geom.pkl'
@@ -135,5 +135,7 @@ plt.subplot(3,1,3)
 plt.title("Model density")
 plt.imshow(np.transpose(dens),origin='lower')
 plt.savefig('cortom.png')
+
+plt.close()
 
 
