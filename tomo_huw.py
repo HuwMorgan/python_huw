@@ -1,3 +1,7 @@
+import os
+import glob
+import json
+import logging
 import numpy as np
 import math
 import general_huw as gen
@@ -10,8 +14,274 @@ import astropy.time as Time
 from sunpy.time import parse_time
 from stereo_spice.coordinates import StereoSpice
 from scipy.interpolate import RectBivariateSpline
+from scipy import signal
+import pickle
+from scipy import ndimage
+from datetime import datetime
+from spacepy.time import Ticktock
+from scipy.stats import median_absolute_deviation
+from bin_ndarray import bin_ndarray
+from time_huw import anytim2cal, anytim2tai,timegrid
 
-import matplotlib.pyplot as plt
+
+def return_timerange(middate):
+    ra = 0.26
+    period = 26.24 * 24. * 3600.  # solar rotation period in seconds
+    startdate = anytim2cal(anytim2tai(middate) - period*ra, form=11)
+    enddate = anytim2cal(anytim2tai(middate) + period*ra, form=11)
+    startdate=startdate[0]
+    enddate=enddate[0]
+    return startdate,enddate
+
+
+def tomo_prep_data(d, rmain=8, shrinkfactusr=False):
+    """ Prepare data for tomography analysis.
+        Parameters
+        ----------
+        `d`: `dict`
+            Data structure output from `timerange2datacube`
+        `rmain`: `float`, default 8
+            distance to the sun centre to apply tomography
+        `bobs`: ndarray
+            parameters
+        Returns
+        -------
+        `d`: `dict`
+            Data structure after being modified.
+        `bobs`: ndarray
+            New array
+        `relnoise`: `float`
+        Note
+        ----
+        A filename is no longer used in this version.
+    """
+
+    spacecraft = d['system']
+    shrinkfact = shrinkfactusr if shrinkfactusr else 2.
+    timeshrink = shrinkfact
+    pashrink = shrinkfact
+
+    # regular grid of observations rebinned into nt and npa
+    npa = int(math.floor(d['npa']) / pashrink)  # Number of position angle observation bins
+    n = int(d['n'] - (d['n'] % timeshrink))
+    if d["n"] != n:
+        print("Number of initial (pre-rebin) time steps change from ",d["n"]," to ",n)
+        dates = [d["dates"][i] for i in range(n)]
+        files = [d["files"][i] for i in range(n)]
+        d['dates'] = dates
+        d['files'] = files
+        d['n'] = n
+        d['im'] = d['im'][:, :, 0: n ]
+
+    nt = int(math.floor(n / timeshrink))
+
+    ht = np.linspace(d['rra'][0],d['rra'][1],num=d['nr'])
+    indht = np.argmin(abs(ht - rmain))
+    rmain = ht[indht]
+
+    # if the data has several distance bins, average over several bins,
+    # otherwise just extract a single slice.
+    d_nr = d['nr']
+    if d_nr > 9:
+        ibot=(indht-4) if (indht-4) >= 0 else 0
+        itop=(indht+4) if (indht+4) <= d_nr else d_nr 
+        nhtext=itop-ibot+1
+        iht=np.linspace(ibot,itop,num=nhtext,dtype=int)
+        bobs0 = np.zeros((d["npa"],nhtext,n))
+        for i in range(nhtext):
+            bobs0[:,i,:]=d["im"][:,iht[i],:]
+        
+        # estimate noise
+        nk0=11
+        nk2=11
+        ker=func.gauss_2d(nk0,nk2,xsig=1.5,ysig=1.5,norm=True)
+        bsmo=np.zeros((d["npa"],nhtext,d["n"]))
+        for i in range(nhtext):
+            bsmo[:,i,:]=signal.convolve2d(np.squeeze(bobs0[:,i,:]),ker,boundary='symm',mode='same')
+        bsmo = np.nanmean(bsmo,axis=1)
+        bsmo = np.broadcast_to(np.expand_dims(bsmo,1), (d["npa"], nhtext, d["n"]))
+        df = bobs0 - bsmo
+        relnoise = df / bsmo
+        relnoise = np.sqrt(np.nansum(relnoise**2, axis=1))/nhtext
+        nb = d['npa'] * d['n'] / float(npa * nt)
+        relnoise=bin_ndarray(relnoise**2,(npa,nt), operation='mean')
+        relnoise=np.sqrt(nb*relnoise)/nb
+        bobs0 = bin_ndarray(bobs0, (npa, nhtext, nt), operation='mean')
+        bobs = np.nanmean(bobs0, axis=1)
+    else:
+        bobs0 = np.squeeze(d['im'][:, indht, :])
+        ker=func.gauss_2d(nk0,nk2,xsig=1.5,ysig=1.5,norm=True)
+        bsmo = signal.convolve2d(bobs0,ker,boundary='symm',mode='same')
+        df = bobs0 - bsmo
+        relnoise = df / bsmo
+        nb = d['npa'] * d['n'] / float(npa * nt)
+        relnoise=bin_ndarray(relnoise**2,(npa,nt), operation='mean')
+        relnoise=np.sqrt(nb*relnoise)/nb
+        bobs = bin_ndarray(bobs0, (npa, nt), operation='mean')
+
+    d['im'] = bobs
+    tai = anytim2tai(d['dates'])
+    tai = bin_ndarray(tai,[nt],operation='mean')
+    dates = anytim2cal(tai, form=11)
+    d['dates'] = dates
+    d['npa'] = int(npa)
+    d['rra'] = [rmain, rmain]
+    d['nr'] = 1
+    d['n'] = nt
+    d['relnoise'] = relnoise
+    d['rmain'] = rmain
+
+    return d
+
+def timerange2datacube(middate,mintrange=None, maxtimegap=None):
+    
+    """ Process the first step of tomography
+        Parameters
+        ----------
+        startdate : `str`
+        enddate : `str`
+        mintrange : number of seconds
+        maxtimegap : number of seconds
+        middate : `str`
+        synthetic : `bool`, optional default `False`
+        usrdir : `str`, optional
+        save_data : `bool`, optional default `True`
+        Returns
+        -------
+            a datacube
+        Details
+        -------
+        - open ~two weeks of pB fits files and save in a datacube
+        - Extract one ’slice’ of the data at a constant distance from the Sun
+        - Prepare some other variables and arrays that are needed
+          for the tomography (e.g. set up lines of sight and
+          Carrington co-ordinates etc).
+        Written by: Huw Morgan
+    """
+
+    SEC_IN_HOUR = 3600
+    MAX_N_FILES = 50
+
+    startdate,enddate = return_timerange(middate)
+    
+    print(startdate, '=>', enddate)
+
+    
+    stereo='a'
+    instr = 'cor2'
+    spacecraft = stereo
+    mission = 'stereo'
+    # topdir = os.getenv('PROCESSED_DATA')+'/stereo/secchi'
+    # caldir = topdir+'/separated_new/'+spacecraft+'/cor2/dat'
+    # srchstr = instr+'_'+spacecraft+'_stereo_quiescnt_*.dat'
+    topdir = os.path.join(os.getenv('PROCESSED_DATA'),
+                            'stereo/secchi/pb', spacecraft)
+    caldir = os.path.join(os.getenv('PROCESSED_DATA'),
+                            'stereo/secchi/pb', spacecraft, 'cor2')
+    # srchstr = instr + '_' + spacecraft + '_bk_*.dat'
+    srchstr = 'cor2_a_pb_*.pkl'
+    system = 'sta'
+
+    starttai = anytim2tai(startdate)
+    endtai = anytim2tai(enddate)
+    range_ = endtai - starttai
+
+    dates=timegrid(startdate,enddate,delta=1,days=True)
+    days=anytim2cal(dates,form=11,date_only=True)
+    
+    ndays = len(days)
+
+
+    cntfiles = 0
+    files = np.empty(0,dtype=object)
+    for iday in range(ndays):
+        fnow = glob.glob(os.path.join(caldir, days[iday],'')+srchstr)
+        cnt = len(fnow)
+        if cnt == 0:
+            continue
+        else:
+            files=np.append(files,fnow)
+            cntfiles += cnt
+
+    if cntfiles == 0:
+        logging.error('No files found (timerange2datacube)')
+        return -1
+
+    if cntfiles < MAX_N_FILES:
+        logging.error('Not enough files found (timerange2datacube)')
+        return -1
+
+    files=np.sort(files)
+
+    for ifile in range(cntfiles):
+        if ifile % 50 == 0:
+            print(files[ifile])
+        
+        afile=open(files[ifile],"rb")
+        d=pickle.load(afile)
+        afile.close()
+
+        # d = json.load(files[ifile])
+
+        if ifile == 0:
+            imm = np.zeros((d['npa'], d['nht'], cntfiles))
+            dates = np.empty(cntfiles,dtype=object)
+            filesorig = np.empty(cntfiles,dtype=object)
+
+        imm[:, :, ifile] = np.transpose(d['pb'])
+        dates[ifile]=d['date']
+        filesorig[ifile]=d['files'][0]
+
+    t = np.sum(np.sum(imm, axis=0), axis=0)
+    m = ndimage.median_filter(t, size=15)
+    df = np.abs(t - m)/m
+    cntfilesorig = cntfiles
+    mad = median_absolute_deviation(df, nan_policy='omit')
+    index=df < mad*7
+    indok = np.squeeze(np.where(index))
+    cntfiles = np.count_nonzero(index)
+
+
+    if cntfiles == 0:
+        logging.error('Very strange problem with data!')
+        return
+
+    print('Number of rejected files =', cntfilesorig - cntfiles)
+    imm = imm[:, :, indok]
+    dates = dates[indok]
+    files = files[indok]
+    filesorig = filesorig[indok]
+
+    if mintrange is not None:
+        dtai = anytim2tai(dates)
+
+        if (max(dtai) - min(dtai)) < mintrange:
+            logging.error('Available data time range'
+                        'is too small (timerange2datacube)')
+            return
+
+        if maxtimegap is not None:
+            dt = dtai[1:] - dtai[0:-1]
+            cntbad = np.count_nonzero(dt >= maxtimegap)
+            if cntbad > 0:
+                logging.error('There are data gaps larger than maxtimegap =',
+                            maxtimegap/SEC_IN_HOUR, 'hours (timerange2datacube)')
+                return 
+
+    imm[0,3:5,10]=-1
+    indexbad=np.logical_or(imm < 0,~np.isfinite(imm))
+    cntbad = np.count_nonzero(indexbad)
+    if cntbad > 0:
+        imm = np.where(indexbad,np.nan,imm)
+        print(cntbad, 'bad pixels (all set now to NAN)')
+
+
+    d = {'dates': list(dates), 'files': list(files), 'im': imm, 'nr': d['nht'],
+         'npa': d['npa'], 'n': cntfiles, 'rra': d['rra'], 'para': d['para'],
+         'filesorig': list(filesorig), 'geometry': 'polar', 'system': "sta",
+         'type': 'pb'}
+
+    return d
 
 
 def makeg(p,r,x={},y={},z={},nocube=False,bk=False,nopos=False):
@@ -132,8 +402,8 @@ def tikhonov_search_tomo(d,sphrecon,sphdata,geom,nl=25,ndens=20):
     mna=np.mean(np.abs(sphdata["sph"]))
     a = a/mna
 
-    y=np.ravel(bobs)/mna
-    noise=np.ravel(relnoise)*y
+    y=np.ravel(bobs,order='F')/mna
+    noise=np.ravel(relnoise,order='F')*y
 
     index=~np.isnan(y) & ~np.isnan(noise)
     y=y[index]
@@ -163,7 +433,7 @@ def tikhonov_search_tomo(d,sphrecon,sphdata,geom,nl=25,ndens=20):
     minb=np.percentile(bobs,2)
     indmin=bobs < minb
     bmin=bobs[indmin]
-    geotemp=np.swapaxes(np.sum(geom["geomult"],axis=2),1,0)
+    geotemp=np.sum(geom["geomult"],axis=2)
     geotemp=geotemp[indmin]
     densmin=bmin/geotemp
     min_d0=np.mean(densmin)*0.2
@@ -232,7 +502,7 @@ def tomo_make_geom(d,large=True):
     dates=d["dates"]
     nt=np.size(dates)
     
-    tai=time_huw.anytim2tai(dates)
+    tai=anytim2tai(dates)
     pa=coord.make_coordinates(npa,[0,360],minus_one=True)*np.deg2rad(1)
 
     rsun_cm=const.phys_constants(rsun=True)

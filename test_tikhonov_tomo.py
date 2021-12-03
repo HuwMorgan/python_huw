@@ -23,13 +23,21 @@ import os
 # sphnow=func.make_spher_harm(7,lon,lat,userlm=[l,m])
 
 rmain=4.
+middate='2017/07/07 12:00'
+mintrange=10*3600.*24.
+maxtimegap=3*3600*24.
+
+os.environ['PROCESSED_DATA'] = '/Users/hum2/data/sweep'
+
 dir="/Users/hum2/data/sweep/"
+overwrite_datacube=False
 overwrite_data=False
 overwrite_geom=False
 overwrite_sphrecon=False
-overwrite_fit=True
-overwrite_coeff=True
+overwrite_fit=False
+overwrite_coeff=False
 
+savenamedatacube=dir+'datacube.pkl'
 savenamed=dir+'d.pkl'
 savenamegeom=dir+'geom.pkl'
 savenamesphrecon=dir+'sphrecon.pkl'
@@ -38,31 +46,48 @@ savefit=dir+"tikhonov_search.pkl"
 savecoeff=dir+"tikhonov_opt.pkl"
 
 # FOLLOWING TO OPEN DATA DATACUBE STRUCTURE (IDL SAVE FILE) AND RUN TOMO_MAKE_GEOM, SAVING TO GEOM.PKL IN DIRECTORY ABOVE
+# v=readsav(dir+'d.dat',verbose=False)
+# tag_name=list(v.keys())
+# values=list(v.values())
+# d={}
+# for i in np.arange(np.size(tag_name)):
+#     print(tag_name[i])
+#     if tag_name[i]=="dates" or tag_name[i]=="files" or tag_name[i]=="filesorig":
+#         n=np.size(values[i])
+#         val=[values[i][j].decode("utf-8") for j in range(n)]
+#     elif tag_name[i]=="system" or tag_name[i]=="type" or tag_name[i]=="geometry":
+#         val=values[i].decode("utf-8")
+#     else:
+#         val=values[i]
+#     d[tag_name[i]]=val
+# afile=open(savenamed,"wb")
+# pickle.dump(d,afile)
+# afile.close()
+
+
+if os.path.exists(savenamedatacube) and not overwrite_datacube:
+    print("Reading ",savenamedatacube)
+    afile=open(savenamedatacube,"rb")
+    datacube=pickle.load(afile)
+    afile.close()
+else:
+    datacube=tomo.timerange2datacube(middate,mintrange=mintrange,maxtimegap=maxtimegap)
+    afile=open(savenamedatacube,"wb")
+    pickle.dump(datacube,afile)
+    afile.close()
+
+# FOLLOWING TO OPEN DATA DATACUBE STRUCTURE (IDL SAVE FILE) AND RUN TOMO_MAKE_GEOM, SAVING TO GEOM.PKL IN DIRECTORY ABOVE
 if os.path.exists(savenamed) and not overwrite_data:
     print("Reading ",savenamed)
     afile=open(savenamed,"rb")
     d=pickle.load(afile)
     afile.close()
 else:
-    v=readsav(dir+'d.dat',verbose=False)
-    tag_name=list(v.keys())
-    values=list(v.values())
-    d={}
-    for i in np.arange(np.size(tag_name)):
-        print(tag_name[i])
-        if tag_name[i]=="dates" or tag_name[i]=="files" or tag_name[i]=="filesorig":
-            n=np.size(values[i])
-            val=[values[i][j].decode("utf-8") for j in range(n)]
-        elif tag_name[i]=="system" or tag_name[i]=="type" or tag_name[i]=="geometry":
-            val=values[i].decode("utf-8")
-        else:
-            val=values[i]
-        d[tag_name[i]]=val
+    d=tomo.tomo_prep_data(datacube)
     afile=open(savenamed,"wb")
     pickle.dump(d,afile)
     afile.close()
 
-# FOLLOWING TO OPEN DATA DATACUBE STRUCTURE (IDL SAVE FILE) AND RUN TOMO_MAKE_GEOM, SAVING TO GEOM.PKL IN DIRECTORY ABOVE
 if os.path.exists(savenamegeom) and not overwrite_geom:
     print("Reading ",savenamegeom)
     afile=open(savenamegeom,"rb")
@@ -130,7 +155,7 @@ plt.title("Model pB")
 plt.imshow(np.transpose(bmod),origin='lower')
 plt.subplot(3,1,2)
 plt.title("Observed pB")
-plt.imshow(d["im"],origin='lower')
+plt.imshow(np.transpose(d["im"]),origin='lower')
 plt.subplot(3,1,3)
 plt.title("Model density")
 plt.imshow(np.transpose(dens),origin='lower')

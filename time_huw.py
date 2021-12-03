@@ -1,10 +1,18 @@
 from sunpy.time import parse_time
+from sunpy.time import TimeRange
 from astropy.time import Time
+from astropy.time import TimeDelta
+import astropy.units as u
 import numpy as np
 import re
 
-def anytim2tai(date_in):
+def anytim2tai(date_in0):
 
+    if type(date_in0) is str:
+        date_in = [date_in0]
+    else:
+        date_in = date_in0
+        
     n=np.size(date_in)
     tai=np.empty(n)
 
@@ -23,7 +31,7 @@ def anytim2tai(date_in):
     return tai
 
     
-def anytim2cal(date_in0,tai=False,form=11,date_only=False,msec=True):
+def anytim2cal(date_in0,tai=False,form=11,date_only=False,msec=False):
 
     n=np.size(date_in0)
     if isinstance(date_in0,list)==False and isinstance(date_in0,np.ndarray)==False:
@@ -69,12 +77,53 @@ def anytim2cal(date_in0,tai=False,form=11,date_only=False,msec=True):
             isms=re.findall("[.]",date)
             if not isms==False:
                 ipos = re.search("[.]", date)
-                date=date[0:ipos.span()[0]]
+                if ipos != None: 
+                    date=date[0:ipos.span()[0]]
 
         datemain[imain]=date
 
     return datemain
 
+def timegrid(startdate_in,enddate_in,delta=1,seconds=False,hours=False,days=False):
+
+    startdate=parse_time(startdate_in)
+    enddate=parse_time(enddate_in)
+
+    if not days and not hours and not seconds:
+        seconds=True
+
+    if seconds:
+        deltat=delta*u.second
+    elif hours:
+        deltat=delta*u.hour
+    elif days:
+        deltat=delta*u.day
+    else:
+        print("Time_huw.timegrid: please specify one of seconds, hours or days for time increment")
+        return
+
+    time_range=TimeRange(startdate,deltat)
+
+    if time_range.end >= enddate:
+        print("End date is less than start date plus one time step, returning start date")
+        return startdate_in
+
+    timeg=[time_range.start.value]
+    next=True
+    while next:  
+        time_range.next()
+        if time_range.start.value <= enddate:
+            timeg.append(time_range.start.value)
+            next=True
+        else:
+            next=False
+        
+    timeg2=anytim2cal(timeg)
+    
+    return timeg2
+    
+
+    obstime=parse_time(dates)
 
 def yyyymmdd2cal(d0,date=False,tai=False):
 
