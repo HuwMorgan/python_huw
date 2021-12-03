@@ -34,7 +34,7 @@ def return_timerange(middate):
     return startdate,enddate
 
 
-def tomo_prep_data(d, rmain=8, shrinkfactusr=False):
+def tomo_prep_data(d, rmain=8., shrinkfactusr=False):
     """ Prepare data for tomography analysis.
         Parameters
         ----------
@@ -82,6 +82,9 @@ def tomo_prep_data(d, rmain=8, shrinkfactusr=False):
     # if the data has several distance bins, average over several bins,
     # otherwise just extract a single slice.
     d_nr = d['nr']
+    nk0=11
+    nk2=11
+    ker=func.gauss_2d(nk0,nk2,xsig=1.5,ysig=1.5,norm=True)
     if d_nr > 9:
         ibot=(indht-4) if (indht-4) >= 0 else 0
         itop=(indht+4) if (indht+4) <= d_nr else d_nr 
@@ -90,11 +93,8 @@ def tomo_prep_data(d, rmain=8, shrinkfactusr=False):
         bobs0 = np.zeros((d["npa"],nhtext,n))
         for i in range(nhtext):
             bobs0[:,i,:]=d["im"][:,iht[i],:]
-        
+
         # estimate noise
-        nk0=11
-        nk2=11
-        ker=func.gauss_2d(nk0,nk2,xsig=1.5,ysig=1.5,norm=True)
         bsmo=np.zeros((d["npa"],nhtext,d["n"]))
         for i in range(nhtext):
             bsmo[:,i,:]=signal.convolve2d(np.squeeze(bobs0[:,i,:]),ker,boundary='symm',mode='same')
@@ -110,7 +110,6 @@ def tomo_prep_data(d, rmain=8, shrinkfactusr=False):
         bobs = np.nanmean(bobs0, axis=1)
     else:
         bobs0 = np.squeeze(d['im'][:, indht, :])
-        ker=func.gauss_2d(nk0,nk2,xsig=1.5,ysig=1.5,norm=True)
         bsmo = signal.convolve2d(bobs0,ker,boundary='symm',mode='same')
         df = bobs0 - bsmo
         relnoise = df / bsmo
@@ -336,7 +335,7 @@ def tikhonov_opt_tomo(d):
 
     g=d["rho"]
 
-    thresh=np.percentile(g,15)
+    thresh=np.nanpercentile(g,15)
     mask=g < thresh
 
     mask=filt.region_size_filter(mask,npix=5)
@@ -399,7 +398,7 @@ def tikhonov_search_tomo(d,sphrecon,sphdata,geom,nl=25,ndens=20):
     a=np.zeros((n,nsphdata))
     for i in np.arange(nsphdata):
         a[:,i]=np.ravel(sphdata["sph"][:,:,i],order='F')
-    mna=np.mean(np.abs(sphdata["sph"]))
+    mna=np.nanmean(np.abs(sphdata["sph"]))
     a = a/mna
 
     y=np.ravel(bobs,order='F')/mna
@@ -412,17 +411,17 @@ def tikhonov_search_tomo(d,sphrecon,sphdata,geom,nl=25,ndens=20):
     a=a[index,:]
 
     weights=1/noise
-    weights=weights/np.mean(weights)
+    weights=weights/np.nanmean(weights)
     a=a*np.broadcast_to(np.expand_dims(weights,1),(n,nsphdata))
     y=y*weights
 
     xx=np.matmul(np.transpose(a),a)
-    xy=[np.sum(a[:,i]*y) for i in np.arange(nsphdata)]
+    xy=[np.nansum(a[:,i]*y) for i in np.arange(nsphdata)]
     xxinv=np.linalg.inv(xx)
     xy2=np.broadcast_to(xy,(nsphdata,nsphdata))
 
-    w=np.sum(np.abs(sphdata["lm"]),axis=1)
-    w=w/np.mean(w)
+    w=np.nansum(np.abs(sphdata["lm"]),axis=1)
+    w=w/np.nanmean(w)
     id=np.identity(nsphdata)*np.broadcast_to(w,(nsphdata,nsphdata))
 
     diagxx=np.diag(xx)
@@ -430,14 +429,14 @@ def tikhonov_search_tomo(d,sphrecon,sphdata,geom,nl=25,ndens=20):
     lmx=np.nanmax(diagxx)*2.0
     l=10**np.linspace(np.log10(lmn),np.log10(lmx),num=nl)
 
-    minb=np.percentile(bobs,2)
+    minb=np.nanpercentile(bobs,2)
     indmin=bobs < minb
     bmin=bobs[indmin]
-    geotemp=np.sum(geom["geomult"],axis=2)
+    geotemp=np.nansum(geom["geomult"],axis=2)
     geotemp=geotemp[indmin]
     densmin=bmin/geotemp
-    min_d0=np.mean(densmin)*0.2
-    max_d0=np.mean(densmin)*2.0
+    min_d0=np.nanmean(densmin)*0.2
+    max_d0=np.nanmean(densmin)*2.0
     mindens=np.linspace(min_d0,max_d0,num=ndens)
     
     sph=sphrecon["sph"]
@@ -458,15 +457,15 @@ def tikhonov_search_tomo(d,sphrecon,sphdata,geom,nl=25,ndens=20):
         print(il,' out of ',nl-1)
     
         inv=np.linalg.inv(xx+l[il]*id)
-        c=np.sum(xy2*inv,1)
+        c=np.nansum(xy2*inv,1)
 
-        dens=np.sum(np.broadcast_to(c,(nlon,nlat,nsph))*sph,axis=2)
+        dens=np.nansum(np.broadcast_to(c,(nlon,nlat,nsph))*sph,axis=2)
         
         for idens in np.arange(0,ndens):
             densnow=np.where(dens > mindens[idens],dens,mindens[idens])
-            c=[np.sum(np.squeeze(sph[:,:,isph])*densnow*sinlat)*dlon*dlat for isph in np.arange(0,nsph)]
-            yf=np.sum(a*np.broadcast_to(np.expand_dims(c,0),(n,nsphdata)),axis=1)            
-            rho[il,idens]=np.mean(np.sqrt((yf-y)**2)/noise)
+            c=[np.nansum(np.squeeze(sph[:,:,isph])*densnow*sinlat)*dlon*dlat for isph in np.arange(0,nsph)]
+            yf=np.nansum(a*np.broadcast_to(np.expand_dims(c,0),(n,nsphdata)),axis=1)            
+            rho[il,idens]=np.nanmean(np.sqrt((yf-y)**2)/noise)
             cmain[:,il,idens]=c
 
     t={
